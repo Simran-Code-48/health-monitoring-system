@@ -215,7 +215,7 @@ if st.button("Predict from Manual Input"):
 st.header("Prediction from ThingSpeak data :")
 
 # URL to fetch live data
-url = "https://api.thingspeak.com/channels/2754538/feeds.json?api_key=FWDLYBFK7I9ETQ8Q&results=100"
+url = "https://api.thingspeak.com/channels/2754538/feeds.json?api_key=FWDLYBFK7I9ETQ8Q&results=1000"
 
 if st.button("Predict from API"):
     heart_rate, pulse, spo2 = fetch_data(url)
