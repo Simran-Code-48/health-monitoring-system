@@ -1,151 +1,230 @@
-import streamlit as st
-import pandas as pd
 import math
 from pathlib import Path
+import streamlit as st
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report, confusion_matrix
+from joblib import dump, load
+import requests
 
-# Set the title and favicon that appear in the Browser's tab bar.
-st.set_page_config(
-    page_title='GDP dashboard',
-    page_icon=':earth_americas:', # This is an emoji shortcode. Could be a URL too.
-)
+# Page Configuration
+st.set_page_config(page_title="Health Monitoring App", layout="wide")
 
-# -----------------------------------------------------------------------------
-# Declare some useful functions.
+# Title and Description
+st.title("Health Monitoring App")
+st.markdown("""
+This app demonstrates:
+- **Real-time health monitoring predictions** using heart rate, SpO2, and pulse rate.
+- **Model comparison** for disease classification.
+- **Fine-tuning of Random Forest** models.
+""")
 
-@st.cache_data
-def get_gdp_data():
-    """Grab GDP data from a CSV file.
+# Sidebar Menu
+menu = st.sidebar.radio("Navigation", ["Generate Data", "Train Model", "Model Comparison", "Real-Time Prediction"])
 
-    This uses caching to avoid having to read the file every time. If we were
-    reading from an HTTP endpoint instead of a file, it's a good idea to set
-    a maximum age to the cache with the TTL argument: @st.cache_data(ttl='1d')
-    """
+# Generate Synthetic Data
+if menu == "Generate Data":
+    st.header("Data")
+    data_size = st.slider("Number of records ", 1000, 20000, 10000)
+    np.random.seed(52)
+    heart_rate = np.random.randint(60, 120, data_size)
+    spo2 = np.random.uniform(85, 100, data_size)
+    pulse_rate = np.random.randint(60, 120, data_size)
 
-    # Instead of a CSV on disk, you could read from an HTTP endpoint here too.
-    DATA_FILENAME = Path(__file__).parent/'data/gdp_data.csv'
-    raw_gdp_df = pd.read_csv(DATA_FILENAME)
-
-    MIN_YEAR = 1960
-    MAX_YEAR = 2022
-
-    # The data above has columns like:
-    # - Country Name
-    # - Country Code
-    # - [Stuff I don't care about]
-    # - GDP for 1960
-    # - GDP for 1961
-    # - GDP for 1962
-    # - ...
-    # - GDP for 2022
-    #
-    # ...but I want this instead:
-    # - Country Name
-    # - Country Code
-    # - Year
-    # - GDP
-    #
-    # So let's pivot all those year-columns into two: Year and GDP
-    gdp_df = raw_gdp_df.melt(
-        ['Country Code'],
-        [str(x) for x in range(MIN_YEAR, MAX_YEAR + 1)],
-        'Year',
-        'GDP',
-    )
-
-    # Convert years from string to integers
-    gdp_df['Year'] = pd.to_numeric(gdp_df['Year'])
-
-    return gdp_df
-
-gdp_df = get_gdp_data()
-
-# -----------------------------------------------------------------------------
-# Draw the actual page
-
-# Set the title that appears at the top of the page.
-'''
-# :earth_americas: GDP dashboard
-
-Browse GDP data from the [World Bank Open Data](https://data.worldbank.org/) website. As you'll
-notice, the data only goes to 2022 right now, and datapoints for certain years are often missing.
-But it's otherwise a great (and did I mention _free_?) source of data.
-'''
-
-# Add some spacing
-''
-''
-
-min_value = gdp_df['Year'].min()
-max_value = gdp_df['Year'].max()
-
-from_year, to_year = st.slider(
-    'Which years are you interested in?',
-    min_value=min_value,
-    max_value=max_value,
-    value=[min_value, max_value])
-
-countries = gdp_df['Country Code'].unique()
-
-if not len(countries):
-    st.warning("Select at least one country")
-
-selected_countries = st.multiselect(
-    'Which countries would you like to view?',
-    countries,
-    ['DEU', 'FRA', 'GBR', 'BRA', 'MEX', 'JPN'])
-
-''
-''
-''
-
-# Filter the data
-filtered_gdp_df = gdp_df[
-    (gdp_df['Country Code'].isin(selected_countries))
-    & (gdp_df['Year'] <= to_year)
-    & (from_year <= gdp_df['Year'])
-]
-
-st.header('GDP over time', divider='gray')
-
-''
-
-st.line_chart(
-    filtered_gdp_df,
-    x='Year',
-    y='GDP',
-    color='Country Code',
-)
-
-''
-''
-
-
-first_year = gdp_df[gdp_df['Year'] == from_year]
-last_year = gdp_df[gdp_df['Year'] == to_year]
-
-st.header(f'GDP in {to_year}', divider='gray')
-
-''
-
-cols = st.columns(4)
-
-for i, country in enumerate(selected_countries):
-    col = cols[i % len(cols)]
-
-    with col:
-        first_gdp = first_year[first_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-        last_gdp = last_year[last_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-
-        if math.isnan(first_gdp):
-            growth = 'n/a'
-            delta_color = 'off'
+    def label_conditions(hr, sp, pr):
+        if hr > 100 and sp < 90 and pr > 100:
+            return 'Hypoxemia with Tachycardia'
+        elif hr > 100 and pr > 100:
+            return 'Tachycardia'
+        elif sp < 90:
+            return 'Hypoxemia'
         else:
-            growth = f'{last_gdp / first_gdp:,.2f}x'
-            delta_color = 'normal'
+            return 'Healthy'
 
-        st.metric(
-            label=f'{country} GDP',
-            value=f'{last_gdp:,.0f}B',
-            delta=growth,
-            delta_color=delta_color
-        )
+    labels = [label_conditions(hr, sp, pr) for hr, sp, pr in zip(heart_rate, spo2, pulse_rate)]
+    df = pd.DataFrame({
+        'heart_rate': heart_rate,
+        'SpO2': spo2,
+        'pulse_rate': pulse_rate,
+        'disease_status': labels
+    })
+    st.write("Dataset:")
+    st.dataframe(df.head())
+    
+    # Save Dataset
+    if st.button("Save Dataset"):
+        df.to_csv("synthetic_oximeter_pulse_data.csv", index=False)
+        st.success("Dataset saved as 'synthetic_oximeter_pulse_data.csv'")
+
+# Train the Model
+if menu == "Train Model":
+    st.header("Train a Disease Prediction Model")
+    
+    # Load data
+    df = pd.read_csv("synthetic_oximeter_pulse_data.csv")
+    df['disease_status'] = df['disease_status'].map({
+        'Healthy': 0,
+        'Tachycardia': 1,
+        'Hypoxemia': 2,
+        'Hypoxemia with Tachycardia': 3
+    })
+    X = df[['heart_rate', 'SpO2', 'pulse_rate']]
+    y = df['disease_status']
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    
+    # Train model
+    model = RandomForestClassifier(n_estimators=100, random_state=42)
+    model.fit(X_train, y_train)
+    dump(model, "disease_prediction_model.pkl")
+    st.success("Model trained and saved as 'disease_prediction_model.pkl'")
+    
+    # Evaluate Model
+    y_pred = model.predict(X_test)
+    st.subheader("Evaluation Metrics")
+    st.text(classification_report(y_test, y_pred, target_names=[
+        'Healthy', 'Tachycardia', 'Hypoxemia', 'Hypoxemia with Tachycardia'
+    ]))
+
+# Model Comparison
+if menu == "Model Comparison":
+    st.header("Compare Different Models")
+    
+    from sklearn.ensemble import GradientBoostingClassifier
+    from sklearn.svm import SVC
+    from xgboost import XGBClassifier
+    from sklearn.model_selection import cross_val_score
+
+    df = pd.read_csv("synthetic_oximeter_pulse_data.csv")
+    df['disease_status'] = df['disease_status'].map({
+        'Healthy': 0,
+        'Tachycardia': 1,
+        'Hypoxemia': 2,
+        'Hypoxemia with Tachycardia': 3
+    })
+    X = df[['heart_rate', 'SpO2', 'pulse_rate']]
+    y = df['disease_status']
+    
+    models = {
+        "Random Forest": RandomForestClassifier(n_estimators=100, random_state=42),
+        "Gradient Boosting": GradientBoostingClassifier(random_state=42),
+        "SVM": SVC(kernel='rbf', random_state=42),
+        "XGBoost": XGBClassifier(use_label_encoder=False, eval_metric='mlogloss', random_state=42)
+    }
+    results = {}
+    for name, model in models.items():
+        scores = cross_val_score(model, X, y, cv=5, scoring='accuracy')
+        results[name] = scores.mean()
+    st.write("Model Comparison Results:")
+    st.bar_chart(pd.DataFrame.from_dict(results, orient='index', columns=["Accuracy"]))
+
+# Real-Time Prediction
+if menu == "Real-Time Prediction":
+    st.header("Real-Time Prediction")
+    
+    model = load("disease_prediction_model.pkl")
+    st.write("Enter Health Parameters:")
+    heart_rate = st.number_input("Heart Rate", 60, 120, 80)
+    spo2 = st.number_input("SpO2", 85, 100, 95)
+    pulse_rate = st.number_input("Pulse Rate", 60, 120, 80)
+    
+    if st.button("Predict"):
+        input_data = pd.DataFrame({
+            'heart_rate': [heart_rate],
+            'SpO2': [spo2],
+            'pulse_rate': [pulse_rate]
+        })
+        prediction = model.predict(input_data)
+        disease_map = {
+            0: 'Healthy',
+            1: 'Tachycardia',
+            2: 'Hypoxemia',
+            3: 'Hypoxemia with Tachycardia'
+        }
+        st.success(f"Predicted Disease Status: {disease_map[prediction[0]]}")
+
+def fetch_data(url):
+    try:
+        # Make a GET request to fetch the data
+        response = requests.get(url)
+        response.raise_for_status()  # Raise an error if the request fails
+
+        # Parse JSON response
+        data = response.json()
+
+        # Extract last_entry_id
+        last_entry_id = data["channel"]["last_entry_id"]
+        first_feed = next(feed for feed in data["feeds"] if feed["entry_id"] == 1)
+        second_feed = next(feed for feed in data["feeds"] if feed["entry_id"] == 3)
+        # Find the feed with last_entry_id
+        last_feed = next(feed for feed in data["feeds"] if feed["entry_id"] == last_entry_id)
+        # Extract field values
+        heart_rate = first_feed["field1"]
+        pulse = last_feed["field2"]
+        spo2 = second_feed["field3"]
+        return heart_rate, pulse, spo2
+
+    except Exception as e:
+        st.error(f"Error fetching data: {e}")
+        return None, None, None
+
+
+# Function to predict health status
+def predict_health(heart_rate, pulse, spo2):
+    try:
+        heart_rate = int(heart_rate)
+        pulse = int(pulse)
+        spo2 = int(spo2)
+
+        if heart_rate < 60 or heart_rate > 100:
+            hr_status = "Abnormal"
+        else:
+            hr_status = "Normal"
+
+        if pulse < 50 or pulse > 120:
+            pulse_status = "Abnormal"
+        else:
+            pulse_status = "Normal"
+
+        if spo2 < 95:
+            spo2_status = "Low"
+        else:
+            spo2_status = "Normal"
+
+        return f"Heart Rate: {hr_status}, Pulse: {pulse_status}, SpO₂: {spo2_status}"
+
+    except ValueError:
+        return "Invalid inputs for prediction"
+
+
+# Streamlit app interface
+st.title("Health Monitoring System")
+
+# Input section
+st.header("Manual Input")
+manual_heart_rate = st.text_input("Enter Heart Rate (bpm)", "")
+manual_pulse = st.text_input("Enter Pulse", "")
+manual_spo2 = st.text_input("Enter SpO₂ (%)", "")
+
+if st.button("Predict from Manual Input"):
+    prediction = predict_health(manual_heart_rate, manual_pulse, manual_spo2)
+    st.success(f"Prediction: {prediction}")
+
+# Fetch data and display section
+st.header("Prediction from ThingSpeak data :")
+
+# URL to fetch live data
+url = "https://api.thingspeak.com/channels/2754538/feeds.json?api_key=FWDLYBFK7I9ETQ8Q&results=100"
+
+if st.button("Predict from API"):
+    heart_rate, pulse, spo2 = fetch_data(url)
+    if heart_rate and pulse and spo2:
+        st.write("Fetched Data:")
+        st.write(f"- Heart Rate: {heart_rate}")
+        st.write(f"- Pulse: {pulse}")
+        st.write(f"- SpO₂: {spo2}")
+
+        # Prediction from fetched data
+        prediction = predict_health(heart_rate, pulse, spo2)
+        st.success(f"Prediction: {prediction}")
